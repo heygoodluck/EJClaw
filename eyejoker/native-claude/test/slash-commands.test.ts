@@ -151,4 +151,26 @@ describe("Discord Slash Commands", () => {
     expect(replyPayload.content).toContain("/ask");
     expect(replyPayload.content).toContain("/status");
   });
+
+  it("handles autocomplete for /claude command option", async () => {
+    let respondedChoices: any[] = [];
+    const mockAutocompleteInteraction: any = {
+      commandName: "claude",
+      options: {
+        getFocused: (_detailed: boolean) => ({
+          name: "command",
+          value: "comp",
+        }),
+      },
+      respond: async (choices: any[]) => {
+        respondedChoices = choices;
+      },
+    };
+
+    const { handleAutocomplete } = await import("../src/slash-commands");
+    await handleAutocomplete(mockAutocompleteInteraction);
+
+    expect(respondedChoices.length).toBeGreaterThan(0);
+    expect(respondedChoices[0].value).toBe("/compact");
+  });
 });

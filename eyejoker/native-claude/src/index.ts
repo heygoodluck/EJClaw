@@ -72,7 +72,7 @@ import { StateStore } from "./store";
 import { StartupBarrier } from "./startup-barrier";
 import { prepareConversationRoute } from "./workspace-route";
 import { formatDiscordStatus, renderStatusSnapshot } from "./status-format";
-import { registerSlashCommands, handleSlashCommand } from "./slash-commands";
+import { registerSlashCommands, handleSlashCommand, handleAutocomplete } from "./slash-commands";
 import type { ClaudeExecution, InteractionRecord, InteractiveQuestion, JobRecord } from "./types";
 
 const home = process.env.HOME;
@@ -1718,6 +1718,14 @@ client.on("guildCreate", (guild) => {
 
 client.on("interactionCreate", async (interaction) => {
   await startupBarrier.wait();
+  if (interaction.isAutocomplete()) {
+    try {
+      await handleAutocomplete(interaction);
+    } catch (error) {
+      console.error("autocomplete handler failed", error);
+    }
+    return;
+  }
   if (interaction.isChatInputCommand()) {
     try {
       await handleSlashCommand({

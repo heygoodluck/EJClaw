@@ -1,4 +1,5 @@
 import {
+  AutocompleteInteraction,
   ChatInputCommandInteraction,
   REST,
   Routes,
@@ -13,6 +14,21 @@ import type { ClaudeSdkExecutor } from "./sdk-executor";
 import type { JobRecord, RouteConfig, RuntimeConfig } from "./types";
 import type { StateStore } from "./store";
 import type { JobRuntime } from "./runtime";
+
+export const CLAUDE_CODE_COMMANDS: Array<{ name: string; description: string }> = [
+  { name: "/compact", description: "대화 컨텍스트 압축 및 토큰 절약" },
+  { name: "/context", description: "현재 세션 컨텍스트 크기 및 토큰 사용량" },
+  { name: "/cost", description: "세션 토큰 사용 비용 및 통계" },
+  { name: "/review", description: "코드 변경 사항 리뷰 및 품질 점검" },
+  { name: "/security-review", description: "보안 취약점 및 민감 정보 감사" },
+  { name: "/init", description: "프로젝트 CLAUDE.md 가이드 생성" },
+  { name: "/clear", description: "세션 대화 기록 초기화" },
+  { name: "/usage", description: "토큰 사용량 및 리밋 확인" },
+  { name: "/bug", description: "버그 리포트 작성" },
+  { name: "/doctor", description: "런타임 및 도구 진단" },
+  { name: "/pr-comments", description: "PR 리뷰 코멘트 확인" },
+  { name: "/memory", description: "프로젝트 메모리 및 규칙 확인" },
+];
 
 export function buildSlashCommands(): RESTPostAPIChatInputApplicationCommandsJSONBody[] {
   return [
@@ -104,7 +120,8 @@ export function buildSlashCommands(): RESTPostAPIChatInputApplicationCommandsJSO
         opt
           .setName("command")
           .setDescription("실행할 슬래시 명령어 (예: /compact, /review, /context, /cost)")
-          .setRequired(true),
+          .setRequired(true)
+          .setAutocomplete(true),
       ),
     new SlashCommandBuilder()
       .setName("ask")
@@ -426,6 +443,27 @@ export async function handleSlashCommand(ctx: SlashCommandHandlerContext): Promi
         content: `알 수 없는 슬래시 명령어: ${commandName}`,
         ephemeral: true,
       });
+    }
+  }
+}
+
+export async function handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
+  if (interaction.commandName === "claude") {
+    const focusedOption = interaction.options.getFocused(true);
+    if (focusedOption.name === "command") {
+      const query = focusedOption.value.toLowerCase().trim().replace(/^\//, "");
+      const filtered = CLAUDE_CODE_COMMANDS.filter(
+        (cmd) =>
+          cmd.name.toLowerCase().includes(query) ||
+          cmd.description.toLowerCase().includes(query),
+      ).slice(0, 25);
+
+      await interaction.respond(
+        filtered.map((cmd) => ({
+          name: `${cmd.name} (${cmd.description})`.slice(0, 100),
+          value: cmd.name,
+        })),
+      );
     }
   }
 }
