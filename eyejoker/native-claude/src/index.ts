@@ -1720,7 +1720,7 @@ client.on("interactionCreate", async (interaction) => {
   await startupBarrier.wait();
   if (interaction.isAutocomplete()) {
     try {
-      await handleAutocomplete(interaction);
+      await handleAutocomplete(interaction, { runtimeConfig: config });
     } catch (error) {
       console.error("autocomplete handler failed", error);
     }

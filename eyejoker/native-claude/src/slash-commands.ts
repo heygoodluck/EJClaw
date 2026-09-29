@@ -6,6 +6,9 @@ import {
   SlashCommandBuilder,
   type RESTPostAPIChatInputApplicationCommandsJSONBody,
 } from "discord.js";
+import { existsSync, readdirSync, readFileSync } from "fs";
+import { join, relative } from "path";
+import { homedir } from "os";
 import { formatDiscordStatus, renderStatusSnapshot } from "./status-format";
 import { conversationKey } from "./bridge-utils";
 import { conversationLockKey } from "./conversation-workspace";
@@ -15,20 +18,239 @@ import type { JobRecord, RouteConfig, RuntimeConfig } from "./types";
 import type { StateStore } from "./store";
 import type { JobRuntime } from "./runtime";
 
-export const CLAUDE_CODE_COMMANDS: Array<{ name: string; description: string }> = [
-  { name: "/compact", description: "대화 컨텍스트 압축 및 토큰 절약" },
-  { name: "/context", description: "현재 세션 컨텍스트 크기 및 토큰 사용량" },
-  { name: "/cost", description: "세션 토큰 사용 비용 및 통계" },
-  { name: "/review", description: "코드 변경 사항 리뷰 및 품질 점검" },
-  { name: "/security-review", description: "보안 취약점 및 민감 정보 감사" },
-  { name: "/init", description: "프로젝트 CLAUDE.md 가이드 생성" },
-  { name: "/clear", description: "세션 대화 기록 초기화" },
-  { name: "/usage", description: "토큰 사용량 및 리밋 확인" },
-  { name: "/bug", description: "버그 리포트 작성" },
-  { name: "/doctor", description: "런타임 및 도구 진단" },
-  { name: "/pr-comments", description: "PR 리뷰 코멘트 확인" },
-  { name: "/memory", description: "프로젝트 메모리 및 규칙 확인" },
+export interface ClaudeCodeCommand {
+  name: string;
+  description: string;
+  source?: "builtin" | "skill" | "command";
+}
+
+export const CLAUDE_CODE_COMMANDS: ClaudeCodeCommand[] = [
+  { name: "/compact", description: "대화 컨텍스트 압축 및 토큰 절약", source: "builtin" },
+  { name: "/context", description: "현재 세션 컨텍스트 크기 및 토큰 사용량", source: "builtin" },
+  { name: "/cost", description: "세션 토큰 사용 비용 및 통계", source: "builtin" },
+  { name: "/review", description: "PR 및 코드 변경 사항 리뷰", source: "builtin" },
+  { name: "/code-review", description: "로컬 작업 트리 변경 사항 코드 리뷰", source: "builtin" },
+  { name: "/security-review", description: "보안 취약점 및 민감 정보 감사", source: "builtin" },
+  { name: "/ultrareview", description: "심층 코드 리뷰 실행", source: "builtin" },
+  { name: "/init", description: "프로젝트 CLAUDE.md 및 가이드 초기화", source: "builtin" },
+  { name: "/clear", description: "세션 대화 기록 초기화", source: "builtin" },
+  { name: "/help", description: "사용 가능한 명령어 및 도움말", source: "builtin" },
+  { name: "/status", description: "현재 세션 상태 및 설정 확인", source: "builtin" },
+  { name: "/model", description: "사용할 모델 확인 및 전환", source: "builtin" },
+  { name: "/permissions", description: "권한 모드 확인 및 변경", source: "builtin" },
+  { name: "/effort", description: "추론 강도(effort) 설정", source: "builtin" },
+  { name: "/doctor", description: "런타임 및 도구 진단", source: "builtin" },
+  { name: "/bug", description: "버그 리포트 작성", source: "builtin" },
+  { name: "/usage", description: "토큰 사용량 및 리밋 확인", source: "builtin" },
+  { name: "/usage-credits", description: "사용 크레딧 확인", source: "builtin" },
+  { name: "/plan", description: "실행 계획 수립 모드", source: "builtin" },
+  { name: "/ultraplan", description: "Claude Code 최적화 계획 수립", source: "builtin" },
+  { name: "/branch", description: "세션 브랜치 관리", source: "builtin" },
+  { name: "/fork", description: "현재 세션 포크", source: "builtin" },
+  { name: "/diff", description: "작업 트리 Git 변경 사항 확인", source: "builtin" },
+  { name: "/memory", description: "프로젝트 메모리 및 CLAUDE.md 규칙 확인", source: "builtin" },
+  { name: "/mcp", description: "MCP 서버 상태 및 도구 목록", source: "builtin" },
+  { name: "/skills", description: "활성화된 스킬 목록 확인", source: "builtin" },
+  { name: "/agents", description: "등록된 에이전트 목록 확인", source: "builtin" },
+  { name: "/tasks", description: "백그라운드 태스크 및 진행 상태", source: "builtin" },
+  { name: "/hooks", description: "등록된 훅(Hooks) 목록 확인", source: "builtin" },
+  { name: "/loops", description: "반복 작업 및 루프 제어", source: "builtin" },
+  { name: "/fast", description: "가벼운 작업 빠른 인라인 실행", source: "builtin" },
+  { name: "/export", description: "대화 기록 내보내기", source: "builtin" },
+  { name: "/resume", description: "이전 세션 재개", source: "builtin" },
+  { name: "/login", description: "Claude 계정 로그인", source: "builtin" },
+  { name: "/logout", description: "Claude 계정 로그아웃", source: "builtin" },
+  { name: "/config", description: "Claude 설정 변경", source: "builtin" },
+  { name: "/update", description: "Claude Code 최신 버전 업데이트", source: "builtin" },
+  { name: "/upgrade", description: "Claude Code 업그레이드", source: "builtin" },
+  { name: "/exit", description: "세션 종료", source: "builtin" },
+  { name: "/stop", description: "현재 실행 중인 작업 중단", source: "builtin" },
+  { name: "/add-dir", description: "세션에 디렉터리 추가", source: "builtin" },
+  { name: "/autocompact", description: "자동 컨텍스트 압축 설정", source: "builtin" },
+  { name: "/auto-mode-setup", description: "자동 실행 모드 설정", source: "builtin" },
+  { name: "/brief", description: "요약 브리핑 요청", source: "builtin" },
+  { name: "/color", description: "UI 색상 및 테마 설정", source: "builtin" },
+  { name: "/desktop", description: "데스크톱 앱 연동 모드", source: "builtin" },
+  { name: "/feedback", description: "피드백 전송", source: "builtin" },
+  { name: "/focus", description: "특정 파일 및 컨텍스트에 집중", source: "builtin" },
+  { name: "/insights", description: "세션 인사이트 분석", source: "builtin" },
+  { name: "/passes", description: "다중 패스 실행 검토", source: "builtin" },
+  { name: "/powerup", description: "파워업 기능 설정", source: "builtin" },
+  { name: "/privacy-settings", description: "개인정보 및 데이터 공유 설정", source: "builtin" },
+  { name: "/radio", description: "오디오/라디오 알림 설정", source: "builtin" },
+  { name: "/recap", description: "최근 작업 내용 요약", source: "builtin" },
+  { name: "/remote-control", description: "원격 제어 모드", source: "builtin" },
+  { name: "/remote-env", description: "원격 환경 변수 설정", source: "builtin" },
+  { name: "/rename", description: "세션 이름 변경", source: "builtin" },
+  { name: "/stickers", description: "스티커 및 반응 설정", source: "builtin" },
+  { name: "/tui", description: "터미널 UI 설정", source: "builtin" },
+  { name: "/voice", description: "음성 입출력 설정", source: "builtin" },
+  { name: "/wellbeing", description: "작업 휴식 알림", source: "builtin" },
+  { name: "/workflows", description: "워크플로우 템플릿 실행", source: "builtin" },
+  { name: "/terminal-setup", description: "터미널 환경 설정", source: "builtin" },
+  { name: "/teleport", description: "세션 텔레포트 및 공유", source: "builtin" },
+  { name: "/reload-skills", description: "스킬 목록 다시 로드", source: "builtin" },
+  { name: "/reload-plugins", description: "플러그인 다시 로드", source: "builtin" },
 ];
+
+function scanSkillDirs(dirs: string[]): ClaudeCodeCommand[] {
+  const result: ClaudeCodeCommand[] = [];
+  for (const dir of dirs) {
+    if (!existsSync(dir)) continue;
+    try {
+      const entries = readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const skillMd = join(dir, entry.name, "SKILL.md");
+          if (existsSync(skillMd)) {
+            try {
+              const content = readFileSync(skillMd, "utf-8").slice(0, 1500);
+              const nameMatch = content.match(/^name:\s*(.+)$/m);
+              const descMatch = content.match(/^description:\s*["']?([^"'\r\n]+)/m);
+              const matchedName = nameMatch?.[1]?.trim();
+              const rawName = (matchedName || entry.name).replace(/^["']|["']$/g, "");
+              const cmdName = rawName.startsWith("/") ? rawName : `/${rawName}`;
+              const desc = descMatch?.[1]?.trim() || "Custom Claude Skill";
+              result.push({
+                name: cmdName,
+                description: desc,
+                source: "skill",
+              });
+            } catch {}
+          }
+        }
+      }
+    } catch {}
+  }
+  return result;
+}
+
+function scanCommandDirs(dirs: string[]): ClaudeCodeCommand[] {
+  const result: ClaudeCodeCommand[] = [];
+  for (const baseDir of dirs) {
+    if (!existsSync(baseDir)) continue;
+    const walk = (current: string) => {
+      try {
+        const entries = readdirSync(current, { withFileTypes: true });
+        for (const entry of entries) {
+          const full = join(current, entry.name);
+          if (entry.isDirectory()) {
+            walk(full);
+          } else if (entry.name.endsWith(".md")) {
+            try {
+              const content = readFileSync(full, "utf-8").slice(0, 1500);
+              const nameMatch = content.match(/^name:\s*(.+)$/m);
+              const descMatch = content.match(/^description:\s*["']?([^"'\r\n]+)/m);
+              let cmdName: string;
+              const matchedName = nameMatch?.[1]?.trim();
+              if (matchedName) {
+                const raw = matchedName.replace(/^["']|["']$/g, "");
+                cmdName = raw.startsWith("/") ? raw : `/${raw}`;
+              } else {
+                const rel = relative(baseDir, full).replace(/\.md$/, "").replace(/\//g, ":");
+                cmdName = `/${rel}`;
+              }
+              const desc = descMatch?.[1]?.trim() || `Command ${cmdName}`;
+              result.push({
+                name: cmdName,
+                description: desc,
+                source: "command",
+              });
+            } catch {}
+          }
+        }
+      } catch {}
+    };
+    walk(baseDir);
+  }
+  return result;
+}
+
+export function discoverAllClaudeCommands(cwd?: string): ClaudeCodeCommand[] {
+  const map = new Map<string, ClaudeCodeCommand>();
+  for (const cmd of CLAUDE_CODE_COMMANDS) {
+    map.set(cmd.name, cmd);
+  }
+
+  const home = homedir();
+  const skillDirs = [
+    join(home, ".claude", "skills"),
+    join(home, ".claude", "plugins", "cache", "caveman", "caveman", "2.7.0", "skills"),
+    join(home, ".claude", "plugins", "cache", "ponytail", "ponytail", "4.10.0", "skills"),
+    join(home, ".claude", "plugins", "cache", "ponytail", "ponytail", "4.10.0", ".openclaw", "skills"),
+  ];
+  if (cwd) {
+    skillDirs.push(join(cwd, ".claude", "skills"));
+  }
+
+  for (const s of scanSkillDirs(skillDirs)) {
+    if (!map.has(s.name)) {
+      map.set(s.name, s);
+    }
+  }
+
+  const cmdDirs = [
+    join(home, ".claude", "commands"),
+    join(home, ".claude", "gsd-core", "commands"),
+    join(home, ".claude", "plugins", "cache", "caveman", "caveman", "2.7.0", "commands"),
+    join(home, ".claude", "plugins", "cache", "caveman", "caveman", "2.7.0", "src", "plugins", "opencode", "commands"),
+  ];
+  if (cwd) {
+    cmdDirs.push(join(cwd, ".claude", "commands"));
+  }
+
+  for (const c of scanCommandDirs(cmdDirs)) {
+    if (!map.has(c.name)) {
+      map.set(c.name, c);
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+const commandCache = new Map<string, { timestamp: number; commands: ClaudeCodeCommand[] }>();
+
+export function getDiscoveredCommands(cwd?: string): ClaudeCodeCommand[] {
+  const cacheKey = cwd || "global";
+  const now = Date.now();
+  const cached = commandCache.get(cacheKey);
+  if (cached && now - cached.timestamp < 3000) {
+    return cached.commands;
+  }
+  const commands = discoverAllClaudeCommands(cwd);
+  commandCache.set(cacheKey, { timestamp: now, commands });
+  return commands;
+}
+
+export function filterClaudeCommands(commands: ClaudeCodeCommand[], rawQuery: string): ClaudeCodeCommand[] {
+  const query = rawQuery.toLowerCase().trim().replace(/^\//, "");
+  if (!query) {
+    return commands.slice(0, 25);
+  }
+
+  const scored: Array<{ cmd: ClaudeCodeCommand; score: number }> = [];
+  for (const cmd of commands) {
+    const rawName = cmd.name.replace(/^\//, "").toLowerCase();
+    const desc = cmd.description.toLowerCase();
+    let score = 0;
+    if (rawName === query) {
+      score = 200;
+    } else if (rawName.startsWith(query)) {
+      score = 100 - (rawName.length - query.length);
+    } else if (rawName.includes(query)) {
+      score = 50;
+    } else if (desc.includes(query)) {
+      score = 25;
+    }
+
+    if (score > 0) {
+      scored.push({ cmd, score });
+    }
+  }
+
+  scored.sort((a, b) => b.score - a.score || a.cmd.name.localeCompare(b.cmd.name));
+  return scored.slice(0, 25).map((s) => s.cmd);
+}
 
 export function buildSlashCommands(): RESTPostAPIChatInputApplicationCommandsJSONBody[] {
   return [
@@ -447,20 +669,31 @@ export async function handleSlashCommand(ctx: SlashCommandHandlerContext): Promi
   }
 }
 
-export async function handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
+export async function handleAutocomplete(
+  interaction: AutocompleteInteraction,
+  context?: { runtimeConfig?: RuntimeConfig; cwd?: string },
+): Promise<void> {
   if (interaction.commandName === "claude") {
     const focusedOption = interaction.options.getFocused(true);
     if (focusedOption.name === "command") {
-      const query = focusedOption.value.toLowerCase().trim().replace(/^\//, "");
-      const filtered = CLAUDE_CODE_COMMANDS.filter(
-        (cmd) =>
-          cmd.name.toLowerCase().includes(query) ||
-          cmd.description.toLowerCase().includes(query),
-      ).slice(0, 25);
+      let cwd = context?.cwd;
+      if (!cwd && context?.runtimeConfig) {
+        try {
+          const channel = interaction.channel;
+          const parentId = channel && "isThread" in channel && channel.isThread() ? channel.parentId : null;
+          const route = resolveRoute(context.runtimeConfig, interaction.channelId, parentId);
+          if (route) {
+            cwd = route.cwd;
+          }
+        } catch {}
+      }
+
+      const allCommands = getDiscoveredCommands(cwd);
+      const filtered = filterClaudeCommands(allCommands, focusedOption.value);
 
       await interaction.respond(
         filtered.map((cmd) => ({
-          name: `${cmd.name} (${cmd.description})`.slice(0, 100),
+          name: `${cmd.name}${cmd.description ? ` (${cmd.description})` : ""}`.slice(0, 100),
           value: cmd.name,
         })),
       );

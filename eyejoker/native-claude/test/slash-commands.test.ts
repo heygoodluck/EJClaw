@@ -156,6 +156,7 @@ describe("Discord Slash Commands", () => {
     let respondedChoices: any[] = [];
     const mockAutocompleteInteraction: any = {
       commandName: "claude",
+      channelId: "channel-a",
       options: {
         getFocused: (_detailed: boolean) => ({
           name: "command",
@@ -167,10 +168,31 @@ describe("Discord Slash Commands", () => {
       },
     };
 
-    const { handleAutocomplete } = await import("../src/slash-commands");
+    const { handleAutocomplete, discoverAllClaudeCommands, filterClaudeCommands } = await import("../src/slash-commands");
     await handleAutocomplete(mockAutocompleteInteraction);
 
     expect(respondedChoices.length).toBeGreaterThan(0);
     expect(respondedChoices[0].value).toBe("/compact");
+  });
+
+  it("dynamically discovers real-time installed skills and commands", async () => {
+    const { discoverAllClaudeCommands, filterClaudeCommands } = await import("../src/slash-commands");
+    const all = discoverAllClaudeCommands("/root/EJClaw");
+    expect(all.length).toBeGreaterThan(50);
+
+    // Test real-time filtering for GSD skills
+    const gsdResults = filterClaudeCommands(all, "gsd");
+    expect(gsdResults.length).toBeGreaterThan(0);
+    expect(gsdResults.some((c) => c.name.includes("gsd"))).toBe(true);
+
+    // Test real-time filtering for review commands
+    const reviewResults = filterClaudeCommands(all, "review");
+    expect(reviewResults.length).toBeGreaterThan(0);
+    expect(reviewResults[0]?.name).toBe("/review");
+
+    // Test empty query returns up to 25 choices
+    const emptyResults = filterClaudeCommands(all, "");
+    expect(emptyResults.length).toBeLessThanOrEqual(25);
+    expect(emptyResults.length).toBeGreaterThan(10);
   });
 });
